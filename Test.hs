@@ -10,12 +10,11 @@ import Data.Foldable(foldMap)
 import Data.Text.Read(decimal)
 import Prelude hiding(Show,show)
 import Text.Show.Text(show)
-import Control.Monad.State.Strict
 
 data SomeDate = SomeDate String
 
-data MyStructure = MyAAttr Int
-                 | MyBContent T.Text T.Text
+data MyStructure = MyAAttr { myaattr :: Int }
+                 | MyBContent { mybcontentfirst :: T.Text, mybcontentsecond :: T.Text}
 
 isElement :: Name -> Node -> Maybe Element
 isElement n' (NodeElement e@(Element n _ _)) | n == n' = Just e
@@ -64,20 +63,28 @@ myDecimalIso = undefined
 
 data NodePath = AttributePath [Name] | ContentPath [Name]
 
-data XmlTypedNode a = XmlTypedNode {
+data XmlTypedNode a b = XmlTypedNode {
     xmlTypedNodePath :: NodePath
-  , xmlTypedNodeIso :: XmlIso a
+  , xmlPartialIso :: XmlIso a
+  , xmlGet :: b -> a
   }
+
+xmlParse :: XmlTypedNode a b -> T.Text -> Maybe a
+xmlParse tn = xmlIsoFrom ( xmlPartialIso tn )
 
 -- a :: Int, b :: MyStructure
 class XmlFunctor f where
   -- first try
   -- liftXml :: (XmlTypedNode a -> b) -> f a -> f b
-  liftXml :: (a -> b) -> XmlTypedNode a -> f b
+  liftXml :: (a -> b) -> XmlTypedNode a b -> f b
 
 
 newtype XmlParser a = XmlParser {
-  parseXml ::(Element -> Maybe a)
+  parseXml :: Element -> Maybe a
+  }
+
+newtype XmlConstructor a = XmlConstructor {
+  constructXml :: a -> Element
   }
 
 findContentNode :: Element -> [Name] -> Maybe T.Text
@@ -88,13 +95,13 @@ instance XmlFunctor XmlParser where
     case xmlTypedNodePath typedNode of
       ContentPath names -> case findContentNode element names of
         Nothing -> Nothing
-        Just t -> case xmlIsoFrom (xmlTypedNodeIso typedNode) t of
+        Just t -> case xmlParse typedNode t of
           Nothing -> Nothing
           Just a -> Just ( f a )
       AttributePath _ -> undefined
 
 class XmlApplicative f where
-  liftXml2 :: f (a -> b) -> XmlTypedNode a -> f b
+  liftXml2 :: f (a -> b) -> XmlTypedNode a b -> f b
 
 instance XmlApplicative XmlParser where
   liftXml2 partialParser typedNode = XmlParser $ \element ->
@@ -103,23 +110,27 @@ instance XmlApplicative XmlParser where
       Just f -> case xmlTypedNodePath typedNode of
                   ContentPath names -> case findContentNode element names of
                     Nothing -> Nothing
-                    Just t -> case xmlIsoFrom (xmlTypedNodeIso typedNode) t of
+                    Just t -> case xmlParse typedNode t of
                       Nothing -> Nothing
                       Just a -> Just ( f a )
                   AttributePath _ -> undefined
 
+xmlParseText = Just
+
+{-
 constructTwo :: ( XmlFunctor f,XmlApplicative f ) => f MyStructure
-constructTwo = liftXml2 ( liftXml MyBContent (XmlTypedNode (ContentPath [ "b" ]) xmlIsoId) ) (XmlTypedNode (ContentPath ["c"]) xmlIsoId)
+constructTwo = liftXml2 ( liftXml MyBContent (XmlTypedNode (ContentPath [ "b" ]) xmlParseText mybcontentfirst ) ) (XmlTypedNode (ContentPath [ "c" ]) xmlParseText mybcontentsecond )
+-}
 
 constructTwoPartial :: XmlFunctor f => f (T.Text -> MyStructure)
-constructTwoPartial = liftXml MyBContent (XmlTypedNode (ContentPath [ "b" ]) xmlIsoId)
+constructTwoPartial = liftXml MyBContent (XmlTypedNode (ContentPath [ "b" ]) xmlIsoId ( mybcontentfirst ))
 
 --constructMyStructureSimpler :: Syntax a => a MyStructure
 --constructMyStructureSimpler = (MyAAttr <-> (XmlTypedNode "a/@attr" myDecimal )) <@> ( MyBContent <-> (XmlTypedNode "b" xmlIsoId ) <@> (XmlTypedNode "c" xmlIsoId ) )
 constructJustOne :: XmlFunctor f => f MyStructure
 -- first try
 --constructJustOne = MyAAttr <-> (XmlTypedNode "a/@attr" myDecimal)
-constructJustOne = liftXml MyAAttr (XmlTypedNode (AttributePath [ "a","attr" ]) myDecimalIso)
+constructJustOne = liftXml MyAAttr (XmlTypedNode (AttributePath [ "a","attr" ]) myDecimalIso myaattr)
 
 --MyAAttr <$> findNode "a/@attr" parseDecimal <*> findNode "foo/baz" id
 
